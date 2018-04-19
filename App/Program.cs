@@ -8,8 +8,8 @@ namespace App
 {
     class Program
     {
-        const string ConnString = @"Database=MDProject;Server=172.17.30.108;User ID=sa;Password=mingdao!@#123;Pooling=true;Max Pool Size=32767;Min Pool Size=0;";
-        const string FileName = "MDProject.md";
+        const string ConnString = @"Database=MDLog_New;Server=172.17.30.108;User ID=sa;Password=mingdao!@#123;Pooling=true;Max Pool Size=32767;Min Pool Size=0;";
+        const string FileName = "MDLog.md";
 
         static void Main(string[] args)
         {
@@ -17,24 +17,58 @@ namespace App
             File.Delete(path);
 
             var tables = ExecuteDataTable("select * from INFORMATION_SCHEMA.TABLES");
+            var tableNames = new List<string>();
             foreach (DataRow tableName in tables.Rows)
             {
-                var tablename = (string)tableName["TABLE_NAME"];
+                tableNames.Add((string)tableName["TABLE_NAME"]);
+                tableNames.Sort();
+            }
+
+            foreach (var tableName in tableNames)
+            {
+                var tableDesc = string.Empty;
+                var filterTable = true;
+
+                DataTable tableProperties = ExecuteDataTable("select name,value from sys.extended_properties where OBJECT_NAME(major_id)=@tablename and minor_id=0", new SqlParameter("tablename", tableName));
+                if (tableProperties.Rows.Count > 0)
+                {
+                    foreach (DataRow item in tableProperties.Rows)
+                    {
+                        if (item["name"].ToString() == "desc")
+                        {
+                            tableDesc = item["value"].ToString();
+                        }
+                        else if (item["name"].ToString() == "effect")
+                        {
+                            filterTable = !Convert.ToBoolean(item["value"]);
+                        }
+                    }
+                }
+
+                if (filterTable)
+                    continue;
+
+                DataTable tableColumns = ExecuteDataTable("select * from INFORMATION_SCHEMA.COLUMNS where TABLE_NAME=@tablename", new SqlParameter("tablename", tableName));
+                DataTable tableColumnProperties = ExecuteDataTable("select objname as name, value from fn_listextendedproperty (NULL, 'user', 'dbo', 'table', @tablename, 'column', default)", new SqlParameter("tablename", tableName));
+                DataTable tablePKColumns = ExecuteDataTable("EXEC sp_pkeys @table_name=@tablename", new SqlParameter("tablename", tableName));
+
+                var pkPropertyName = string.Empty;
+                if (tablePKColumns.Rows.Count > 0)
+                {
+                    pkPropertyName = tablePKColumns.Rows[0]["COLUMN_NAME"].ToString();
+                }
 
                 var Rows = new List<string>();
-                Rows.Add("### " + tablename);
+                Rows.Add("### " + tableName + " " + tableDesc);
                 Rows.Add("");
-                Rows.Add("| 字段| 数据类型|是否为主键|是否允许为NULL|默认值|描述|");
-                Rows.Add("|-----|---------|----------|--------------|------|----|");
-
-                DataTable tableColumns = ExecuteDataTable("select * from INFORMATION_SCHEMA.COLUMNS where TABLE_NAME=@tablename", new SqlParameter("tablename", tablename));
-                DataTable tableColumnNames = ExecuteDataTable("select b.name,a.value from(SELECT minor_id, value FROM sys.extended_properties WHERE major_id = OBJECT_ID(@tablename)) a ,(SELECT name, column_id FROM sys.columns where object_id = OBJECT_ID(@tablename) ) b where a.minor_id = b.column_id", new SqlParameter("tablename", tablename));
+                Rows.Add("| 字段| 类型|主键|允许空|默认值|描述|");
+                Rows.Add("|-----|-----|----|------|------|----|");
 
                 foreach (DataRow column in tableColumns.Rows)
                 {
                     var name = (string)column["COLUMN_NAME"];
                     var desc = string.Empty;
-                    foreach (DataRow item in tableColumnNames.Rows)
+                    foreach (DataRow item in tableColumnProperties.Rows)
                     {
                         if (item["name"].ToString() == name)
                         {
@@ -43,39 +77,40 @@ namespace App
                         }
                     }
 
-                    var mdtablerow = new MDTableRow();
-                    mdtablerow.ColumnName = name;
-                    mdtablerow.DataType = column["DATA_TYPE"].ToString();
-                    mdtablerow.Desc = desc;
-                    mdtablerow.CharacterMaximumLength = column["CHARACTER_MAXIMUM_LENGTH"].ToString();
-                    mdtablerow.ColumnDefault = column["COLUMN_DEFAULT"].ToString();
-                    mdtablerow.IsNullable = column["IS_NULLABLE"].ToString();
+                    var row = new MDTableRow();
+                    row.ColumnName = name;
+                    row.IsPrimaryKey = pkPropertyName == name;
+                    row.DataType = column["DATA_TYPE"].ToString();
+                    row.Desc = desc;
+                    row.CharacterMaximumLength = column["CHARACTER_MAXIMUM_LENGTH"].ToString();
+                    row.ColumnDefault = column["COLUMN_DEFAULT"].ToString();
+                    row.IsNullable = column["IS_NULLABLE"].ToString();
 
-                    Rows.Add(WriteTableRow(mdtablerow));
+                    Rows.Add(WriteTableRow(row));
                 }
 
                 Rows.Add("");
                 Rows.Add("");
                 File.AppendAllLines(path, Rows);
-                Console.WriteLine(tablename + " 生成完成");
+                Console.WriteLine(tableName + " 生成完成");
             }
             Console.WriteLine();
             Console.WriteLine("生成结束");
             Console.ReadKey();
         }
 
-        public static string WriteTableRow(MDTableRow mdtablerow)
+        public static string WriteTableRow(MDTableRow row)
         {
-            var datatype = mdtablerow.CharacterMaximumLength == "" || mdtablerow.CharacterMaximumLength == "2147483647"
-                ? mdtablerow.DataType : mdtablerow.DataType + "(" + mdtablerow.CharacterMaximumLength + ")";
+            var datatype = row.CharacterMaximumLength == "" || row.CharacterMaximumLength == "2147483647"
+                ? row.DataType : row.DataType + "(" + row.CharacterMaximumLength + ")";
 
             var str = string.Format("|{0}|{1}|{2}|{3}|{4}|{5}|"
-                , mdtablerow.ColumnName
+                , row.ColumnName
                 , datatype
-                , mdtablerow.ColumnName == "ID" ? "PK" : string.Empty
-                , mdtablerow.IsNullable == "NO" ? "false" : "true"
-                , mdtablerow.ColumnDefault
-                , mdtablerow.Desc
+                , row.IsPrimaryKey ? "PK" : string.Empty
+                , row.IsNullable == "NO" ? "false" : "true"
+                , row.ColumnDefault
+                , row.Desc
                 );
             return str;
         }

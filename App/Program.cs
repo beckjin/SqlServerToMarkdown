@@ -8,8 +8,8 @@ namespace App
 {
     class Program
     {
-        const string ConnString = @"Database=MDLog_New;Server=172.17.30.108;User ID=sa;Password=mingdao!@#123;Pooling=true;Max Pool Size=32767;Min Pool Size=0;";
-        const string FileName = "MDLog.md";
+        const string ConnString = @"Database=DBName;Server=.;User ID=sa;Password=123456;Pooling=true;Max Pool Size=32767;Min Pool Size=0;";
+        const string FileName = "DBName.md";
 
         static void Main(string[] args)
         {
